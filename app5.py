@@ -1,10 +1,16 @@
-import pytesseract
+import streamlit as st
 from PIL import Image
+import pytesseract
+import re
+from sumy.parsers.plaintext import PlaintextParser
+from sumy.nlp.tokenizers import Tokenizer
+from sumy.summarizers.lsa import LsaSummarizer
+from nltk.sentiment import SentimentIntensityAnalyzer
+from sklearn.feature_extraction.text import CountVectorizer
 from gtts import gTTS
 from deep_translator import GoogleTranslator
 import os
-import streamlit as st
-
+import base64
 
 # Set the path to the Tesseract executable
 if os.name == 'nt':  # Windows
@@ -17,51 +23,113 @@ import nltk
 nltk.download('punkt')
 nltk.download('vader_lexicon')
 
-# Function to extract text from image using OCR with the selected language
-def extract_text_from_image(image_path, lang='eng'):
+# Function to extract text from an image
+def extract_text_from_image(image, lang='eng'):
     """
     Extracts text from an image using pytesseract OCR.
     Supports multiple languages (e.g., 'eng' for English, 'fra' for French, etc.).
     """
-    # Open the image file
-    img = Image.open(image_path)
-    
-    # Use pytesseract to extract text from the image in the specified language
-    extracted_text = pytesseract.image_to_string(img, lang=lang)
-    
-    return extracted_text
+    try:
+        # Use pytesseract to extract text from the image in the specified language
+        text = pytesseract.image_to_string(image, lang=lang)
+        return text
+    except Exception as e:
+        st.error(f"Error extracting text from image: {e}")
+        return ""
+
+# Function to clean the extracted text
+def clean_text(text):
+    """
+    Cleans the extracted text by removing unnecessary characters and spaces.
+    """
+    try:
+        # Replace multiple newlines with a single space
+        text = re.sub(r'\n+', ' ', text)
+        # Replace multiple spaces with a single space
+        text = re.sub(r'\s+', ' ', text)
+        # Remove special characters (keep alphanumeric, spaces, and basic punctuation)
+        text = re.sub(r'[^\w\s.,!?]', '', text)
+        return text.strip()
+    except Exception as e:
+        st.error(f"Error cleaning text: {e}")
+        return text  # Return original text if cleaning fails
 
 # Function to translate text to the desired language
 def translate_text(text, dest_language='en'):
     """
     Translates the input text to the desired language using deep-translator.
     """
-    translated = GoogleTranslator(source='auto', target=dest_language).translate(text)
-    return translated
+    try:
+        translated = GoogleTranslator(source='auto', target=dest_language).translate(text)
+        return translated
+    except Exception as e:
+        st.error(f"Error translating text: {e}")
+        return text  # Return original text if translation fails
 
-# Improved summarization: Taking the first few paragraphs as summary
-def long_summarize(text, num_paragraphs=5):
+# Function to summarize the text
+def summarize_text(text, sentences_count=3):
     """
-    Summarizes the text by taking the first few paragraphs.
+    Summarizes the text using LSA summarization.
     """
-    paragraphs = text.split('\n\n')  # Split the text into paragraphs
-    summary = '\n\n'.join(paragraphs[:num_paragraphs])  # Join the first 'num_paragraphs' paragraphs
-    return summary
+    try:
+        parser = PlaintextParser.from_string(text, Tokenizer("english"))
+        summarizer = LsaSummarizer()
+        summary_sentences = summarizer(parser.document, sentences_count)
+        summary = " ".join(str(sentence) for sentence in summary_sentences)
+        return summary
+    except Exception as e:
+        st.error(f"Error summarizing text: {e}")
+        return ""
 
-# Function to convert text to speech in the specified language
-def text_to_speech(text, language='en'):
+# Function to analyze sentiment
+def analyze_sentiment(text):
     """
-    Converts the input text to speech in the specified language.
+    Analyzes the sentiment of the text using NLTK's SentimentIntensityAnalyzer.
     """
-    tts = gTTS(text=text, lang=language, slow=False)
-    audio_file = "output.mp3"
-    tts.save(audio_file)
-    return audio_file
+    try:
+        sia = SentimentIntensityAnalyzer()
+        sentiment_score = sia.polarity_scores(text)
+        return sentiment_score
+    except Exception as e:
+        st.error(f"Error analyzing sentiment: {e}")
+        return {}
+
+# Function to add military flair and sentiment analysis
+def add_military_flair(text, sentiment_score):
+    """
+    Adds a military-style intro and outro to the text based on sentiment analysis.
+    """
+    # Determine sentiment description
+    compound_score = sentiment_score['compound']
+    if compound_score >= 0.05:
+        sentiment_desc = "This news is generally positive."
+    elif compound_score <= -0.05:
+        sentiment_desc = "This news is generally negative."
+    else:
+        sentiment_desc = "This news is neutral."
+
+    # Add military-style intro and outro
+    intro = f"Incoming transmission! Stand by for news update!\n\nSentiment Analysis: {sentiment_desc}\n\n"
+    outro = "\n\nMessage complete. Over and out."
+    return f"{intro}{text}{outro}"
+
+# Function to convert text to speech
+def text_to_speech(text, lang='en', output_file="output_audio.mp3"):
+    """
+    Converts the input text to speech using gTTS.
+    """
+    try:
+        tts = gTTS(text=text, lang=lang, slow=False)
+        tts.save(output_file)
+        return output_file
+    except Exception as e:
+        st.error(f"Error converting text to speech: {e}")
+        return None
 
 # Streamlit App
 def main():
-    st.title("OCR, Translate, Summarize, and Text-to-Speech")
-    st.write("Upload an image, extract text using OCR, translate it, summarize it, and optionally convert the summary to speech.")
+    st.title("Automated Newspaper Summarization and Analysis")
+    st.write("Upload a newspaper image to extract, summarize, and analyze the text.")
 
     # Define supported languages for OCR (Tesseract) and translation (Google Translate)
     ocr_languages = {
@@ -131,7 +199,7 @@ def main():
         "Spanish (es)": "es",
         "German (de)": "de",
         "Chinese (Simplified) (zh-CN)": "zh-CN",
-        "Chinese (Traditional) (zh-TW)": "zh-TW",  # Corrected to zh-TW
+        "Chinese (Traditional) (zh-TW)": "zh-TW",
         "Japanese (ja)": "ja",
         "Korean (ko)": "ko",
         "Arabic (ar)": "ar",
@@ -214,36 +282,51 @@ def main():
         # Process the image when the user clicks the button
         if st.button("Process Image"):
             # Extract text from the image
-            extracted_text = extract_text_from_image(uploaded_file, lang=ocr_languages[ocr_language])
+            extracted_text = extract_text_from_image(image, lang=ocr_languages[ocr_language])
             st.subheader("Extracted Text")
             st.text_area("Full Extracted Text", extracted_text, height=300)
 
+            # Clean the extracted text
+            cleaned_text = clean_text(extracted_text)
+            st.subheader("Cleaned Text")
+            st.write(cleaned_text)
+
             # Translate the extracted text
             if ocr_languages[ocr_language] != output_languages[output_language]:
-                translated_text = translate_text(extracted_text, dest_language=output_languages[output_language])
+                translated_text = translate_text(cleaned_text, dest_language=output_languages[output_language])
             else:
-                translated_text = extracted_text
+                translated_text = cleaned_text
             st.subheader("Translated Text")
             st.text_area("Full Translated Text", translated_text, height=300)
 
             # Summarize the translated text
-            summary = long_summarize(translated_text)
+            summary = summarize_text(translated_text)
             st.subheader("Summary")
             st.write(summary)
 
+            # Analyze sentiment
+            sentiment_score = analyze_sentiment(summary)
+            st.subheader("Sentiment Analysis")
+            st.write(sentiment_score)
+
+            # Add military flair and sentiment analysis
+            final_text = add_military_flair(summary, sentiment_score)
+            st.subheader("Final Output with Military Flair and Sentiment Analysis")
+            st.write(final_text)
+
             # Convert the summary to speech if requested
             if play_audio:
-                audio_file = text_to_speech(summary, output_languages[output_language])
+                audio_file = text_to_speech(final_text, output_languages[output_language])
                 st.audio(audio_file, format="audio/mp3")
-
+                st.audio(audio_file, format="audio/mp3", autoplay=True)  # Autoplay the audio
                 # Add a download button for the audio file
                 with open(audio_file, "rb") as f:
-                    audio_bytes = f.read()
+                        audio_bytes = f.read()
                 st.download_button(
-                    label="Download Audio Summary",
-                    data=audio_bytes,
-                    file_name="summary_audio.mp3",
-                    mime="audio/mp3"
+                        label="Download Audio",
+                        data=audio_bytes,
+                        file_name="output_audio.mp3",
+                        mime="audio/mp3"
                 )
 
 # Run the Streamlit app

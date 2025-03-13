@@ -90,15 +90,23 @@ def main():
     print(extracted_text)
 
     # Step 2: Read ground truth text
-    with open(ground_truth_path, "r") as f:
-        reference_text = f.read()
-    print("\nGround Truth Text:")
-    print(reference_text)
+    try:
+        with open(ground_truth_path, "r") as f:
+            reference_text = f.read().strip()  # Ensure to strip any leading/trailing whitespace
+        print("\nGround Truth Text:")
+        print(reference_text)
 
-    # Step 3: Calculate Word Error Rate (WER)
-    print("\nCalculating Word Error Rate (WER)...")
-    wer = calculate_wer(reference_text, extracted_text)
-    print(f"Word Error Rate (WER): {wer * 100:.2f}%")
+        # Step 3: Calculate Word Error Rate (WER) only if reference_text is not empty
+        if reference_text:
+            print("\nCalculating Word Error Rate (WER)...")
+            wer = calculate_wer(reference_text, extracted_text)
+            print(f"Word Error Rate (WER): {wer * 100:.2f}%")
+        else:
+            print("\nError: Ground truth text is empty. Cannot calculate WER.")
+    except FileNotFoundError:
+        print(f"\nError: Ground truth file '{ground_truth_path}' not found.")
+    except Exception as e:
+        print(f"\nError reading ground truth file: {e}")
 
 if __name__ == "__main__":
     main()
